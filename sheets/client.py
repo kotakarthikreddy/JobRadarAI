@@ -14,10 +14,13 @@ SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "12aDfDaW4LP1s97q8CJHG0GPFb1lahRCuCIus0k
 
 _gc   = None
 _sh   = None
+_sheets_disabled = False
 
 
 def _get_sheet():
-    global _gc, _sh
+    global _gc, _sh, _sheets_disabled
+    if _sheets_disabled:
+        return None
     if _sh is not None:
         return _sh
     try:
@@ -26,7 +29,9 @@ def _get_sheet():
 
         creds_json = os.getenv("GOOGLE_CREDS_JSON", "")
         if not creds_json:
-            log.warning("[Sheets] GOOGLE_CREDS_JSON not set — Sheets integration disabled.")
+            if not _sheets_disabled:
+                log.warning("[Sheets] GOOGLE_CREDS_JSON not set — Sheets integration disabled.")
+                _sheets_disabled = True
             return None
 
         creds_data = json.loads(creds_json)
@@ -111,6 +116,24 @@ def update_job_status_sheets(job_id: str, status: str) -> None:
 # ─────────────────────────────────────────────────────────────────
 
 SEEN_HEADERS = ["job_id", "url_hash", "title_hash", "logged_at"]
+
+
+def is_seen_in_sheets(job_id: str, url_hash: str) -> bool:
+    """Layer 1+2 dedup against Google Sheet 'Seen IDs'."""
+    sh = _get_sheet()
+    if not sh:
+        return False
+    try:
+        ws = sh.worksheet("Seen IDs")
+        if job_id:
+            if ws.find(job_id, in_column=1):
+                return True
+        if url_hash:
+            if ws.find(url_hash, in_column=2):
+                return True
+    except Exception:
+        pass
+    return False
 
 
 def log_seen_id(job_id: str, url_hash: str, title_hash: str) -> None:

@@ -74,22 +74,32 @@ def extract_resume_skills(resume: str) -> set:
     return {s for s in CORE_SKILLS if s in rl}
 
 
+def _token_in_text(token: str, text: str) -> bool:
+    """Avoid false positives like 'ai' inside 'brokerage'."""
+    if len(token) <= 3:
+        return bool(re.search(rf"\b{re.escape(token)}\b", text, re.IGNORECASE))
+    return token.lower() in text.lower()
+
+
 def keyword_check(job: dict, resume_skills: set) -> tuple[int, bool]:
     """
     Returns (count, passes).
     Threshold = 1 if no description (title-only), else 2.
     """
     combined  = f"{job.get('title', '')} {job.get('description', '')}".lower()
-    count     = sum(1 for s in resume_skills if s in combined)
+    count     = sum(1 for s in resume_skills if _token_in_text(s, combined))
     has_desc  = bool(job.get("description", "").strip())
     threshold = 2 if has_desc else 1
     return count, count >= threshold
 
 
 def passes_ml_domain_filter(job: dict) -> bool:
-    """Check if job is in the ML/AI/LLM domain."""
-    combined = f"{job.get('title', '')} {job.get('description', '')}".lower()
-    return any(kw.lower() in combined for kw in KEYWORD_FILTER)
+    """Check if job is in the ML/AI/LLM domain (title required; description optional)."""
+    title = (job.get("title") or "").lower()
+    if any(kw.lower() in title for kw in KEYWORD_FILTER):
+        return True
+    desc = (job.get("description") or "")[:2500].lower()
+    return any(kw.lower() in desc for kw in KEYWORD_FILTER)
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -214,8 +224,21 @@ def passes_date_filter(job: dict, max_days_old: int = 7) -> tuple[bool, str]:
 # MASTER FILTER — runs all checks, returns (passes, reason)
 # ─────────────────────────────────────────────────────────────────
 
-def apply_all_filters(job: dict, resume_skills: set) -> tuple[bool, str]:
+def passes_h1b_filter(job: dict, h1b_only: bool = True) -> tuple[bool, str]:
+    """When H1B_ONLY=true, skip jobs from unverified sponsors."""
+    if not h1b_only:
+        return True, ""
+    if job.get("h1b_verified"):
+        return True, ""
+    return False, "not verified H1B sponsor"
+
+
+def apply_all_filters(job: dict, resume_skills: set, h1b_only: bool = True) -> tuple[bool, str]:
     """Apply all hard filters. Returns (passes, skip_reason)."""
+
+    ok, reason = passes_h1b_filter(job, h1b_only=h1b_only)
+    if not ok:
+        return False, reason
 
     # ML/AI domain
     if not passes_ml_domain_filter(job):

@@ -19,7 +19,7 @@ TIER1_LEVER = [
 
 TIER1_GREENHOUSE = [
     # From system prompt
-    "nvidia", "scale_ai", "datadog", "palantir", "mongodb",
+    "nvidia", "scaleai", "datadog", "palantir", "mongodb",
     # From OPT-Job-Scrapper (40 companies)
     "stripe", "coinbase", "robinhood", "brex", "ramp", "plaid",
     "affirm", "marqeta", "chime",

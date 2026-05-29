@@ -13,6 +13,7 @@ import hashlib
 import os
 import sqlite3
 from datetime import datetime, timedelta, timezone
+from difflib import SequenceMatcher
 from typing import Optional
 
 
@@ -122,7 +123,7 @@ def is_new_job(conn: sqlite3.Connection, job: dict) -> bool:
         if row:
             return False
 
-    # Layer 3 — Fuzzy title+company (exact hash within 30 days)
+    # Layer 3 — Fuzzy title+company (>85% similarity within 30 days)
     if title and company:
         thash  = make_title_hash(title, company)
         cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -132,6 +133,16 @@ def is_new_job(conn: sqlite3.Connection, job: dict) -> bool:
         ).fetchone()
         if row:
             return False
+        rows = conn.execute(
+            "SELECT title, company FROM seen_jobs WHERE company=? AND logged_at >= ?",
+            (company.lower().strip(), cutoff),
+        ).fetchall()
+        for r in rows:
+            ratio = SequenceMatcher(
+                None, title.lower().strip(), (r["title"] or "").lower().strip()
+            ).ratio()
+            if ratio > 0.85:
+                return False
 
     return True
 

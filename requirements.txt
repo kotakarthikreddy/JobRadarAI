@@ -1,0 +1,28 @@
+# ── Job board scraping ────────────────────────────────────────────
+python-jobspy==1.1.80
+aiohttp>=3.9.0
+aiohttp-retry>=2.8.3
+beautifulsoup4>=4.12.0
+lxml>=4.9.0
+requests>=2.31.0
+
+# ── AI Providers ──────────────────────────────────────────────────
+google-genai>=1.0.0
+groq>=0.11.0
+
+# ── Streamlit UI ──────────────────────────────────────────────────
+streamlit>=1.35.0
+
+# ── Google Sheets ─────────────────────────────────────────────────
+gspread>=6.0.0
+google-auth>=2.29.0
+
+# ── Config ────────────────────────────────────────────────────────
+pydantic-settings>=2.0.0
+python-dotenv>=1.0.0
+
+# ── Data (use --only-binary to avoid compile issues on Python 3.14) ──
+pandas>=2.0.0
+
+# ── Scheduler (standalone runner) ─────────────────────────────────
+schedule>=1.2.0

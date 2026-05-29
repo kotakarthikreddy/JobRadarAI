@@ -242,8 +242,19 @@ def score_with_gemini(prompt: str, conn: sqlite3.Connection) -> Optional[dict]:
     except Exception as e:
         s = str(e)
         if "429" in s or "quota" in s.lower():
-            log.warning("[Gemini] Quota — sleeping 5s")
-            time.sleep(5)
+            log.warning("[Gemini] Quota — retrying with gemini-1.5-flash after 8s")
+            time.sleep(8)
+            try:
+                resp = _gemini_client.models.generate_content(
+                    model="gemini-1.5-flash", contents=prompt
+                )
+                result = parse_response(resp.text.strip())
+                if result:
+                    result["provider"] = "Gemini / gemini-1.5-flash"
+                    increment_ai_count(conn, "gemini")
+                    return result
+            except Exception:
+                pass
         else:
             log.warning(f"[Gemini] Error: {s[:120]}")
     return None
@@ -260,7 +271,8 @@ def score_job(job: dict, conn: sqlite3.Connection) -> Optional[dict]:
     """
     prompt = build_scoring_prompt(job)
 
-    for name, fn in [("groq", score_with_groq), ("openrouter", score_with_openrouter), ("gemini", score_with_gemini)]:
+    # Spec: Gemini 1.5/2.0 Flash primary; Groq/OpenRouter as fallbacks
+    for name, fn in [("gemini", score_with_gemini), ("groq", score_with_groq), ("openrouter", score_with_openrouter)]:
         result = fn(prompt, conn)
         if result is not None:
             return result

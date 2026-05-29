@@ -14,7 +14,7 @@ from db.storage import init_db, get_job_by_id, update_job_status, get_cover_lett
 from telegram.alerts import _tg_post, send_status
 
 log = logging.getLogger(__name__)
-BOT_TOKEN  = os.getenv("TELEGRAM_BOT_TOKEN", "8481347460:AAGh94HRDgOwvSEJJt0B58WFl-vxtlGYO5I")
+BOT_TOKEN  = os.getenv("TELEGRAM_BOT_TOKEN", "")
 _offset    = 0
 _start_time = datetime.now(timezone.utc)
 
@@ -58,6 +58,11 @@ def handle_update(update: dict) -> None:
         elif text.startswith("/applied_"):
             job_id = text[9:].strip()
             update_job_status(conn, job_id, "Applied")
+            try:
+                from sheets.client import update_job_status_sheets
+                update_job_status_sheets(job_id, "Applied")
+            except Exception:
+                pass
             fu = (datetime.now(timezone.utc) + timedelta(days=7)).strftime("%Y-%m-%d")
             _tg_post(f"✅ <b>Applied logged!</b>\n📅 Follow-up: {fu}")
 

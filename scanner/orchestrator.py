@@ -33,7 +33,7 @@ from config.companies import (
 from scanner.filters import (
     apply_all_filters, detect_h1b, extract_resume_skills,
 )
-from db.storage import init_db, is_new_job, mark_job_seen, upsert_job, prune_old_jobs, get_db_stats
+from db.storage import init_db, is_new_job, mark_job_seen, upsert_job, prune_old_jobs, get_db_stats, make_url_hash, make_title_hash
 from ai.scorer import score_job, usage_report
 from telegram.alerts import send_wave1, send_wave2, send_crash_alert
 
@@ -209,20 +209,24 @@ async def fetch_lever_jobs(session) -> list:
 
 async def _fetch_ashby_one(session, company: str) -> list:
     data = await _get_json(session, f"https://api.ashbyhq.com/posting-api/job-board/{company}")
-    if not data:
+    postings = data.get("jobs", data.get("jobPostings", [])) if data else []
+    if not postings:
         return []
     jobs = []
-    for p in data.get("jobPostings", []):
+    for p in postings:
+        loc = p.get("location", "")
+        if isinstance(loc, dict):
+            loc = loc.get("name", "")
         jobs.append({
-            "title":    p.get("title", ""),
-            "company":  company.replace("-", " ").title(),
-            "location": p.get("locationName", ""),
-            "description": strip_html(p.get("descriptionHtml", "")),
-            "url":      p.get("jobUrl", ""),
-            "posted":   (p.get("publishedDate") or "")[:10],
-            "source":   f"Ashby/{company}",
-            "job_id":   p.get("id", ""),
-            "ats_type": "ashby",
+            "title":       p.get("title", ""),
+            "company":     company.replace("-", " ").title(),
+            "location":    loc or ("Remote" if p.get("isRemote") else ""),
+            "description": strip_html(p.get("descriptionPlain", "") or p.get("descriptionHtml", "")),
+            "url":         p.get("jobUrl", p.get("applyUrl", "")),
+            "posted":      (p.get("publishedAt") or "")[:10],
+            "source":      f"Ashby/{company}",
+            "job_id":      str(p.get("id", "")),
+            "ats_type":    "ashby",
         })
     return jobs
 
@@ -267,6 +271,87 @@ async def fetch_google_jobs(session) -> list:
 # ─────────────────────────────────────────────────────────────────
 # SOURCE 6: AMAZON JOBS
 # ─────────────────────────────────────────────────────────────────
+
+async def fetch_microsoft_jobs(session) -> list:
+    log.info("🪟 [Microsoft] Scanning…")
+    data = await _get_json(
+        session,
+        "https://gcsservices.careers.microsoft.com/search/api/v1/search",
+        params={"q": "ML engineer", "pgSz": "20", "o": "Recent"},
+    )
+    if not data:
+        return []
+    jobs = []
+    result = (data.get("operationResult") or {}).get("result") or {}
+    for item in result.get("jobs", []):
+        jobs.append({
+            "title":       item.get("title", ""),
+            "company":     "Microsoft",
+            "location":    item.get("properties", {}).get("locations", ["USA"])[0]
+                           if item.get("properties", {}).get("locations") else "USA",
+            "description": strip_html(item.get("description", "")),
+            "url":         item.get("jobUrl", "https://careers.microsoft.com"),
+            "posted":      (item.get("postingDate") or "")[:10],
+            "source":      "Microsoft Careers",
+            "job_id":      str(item.get("jobId", "")),
+            "ats_type":    "microsoft",
+        })
+    log.info(f"  [Microsoft] {len(jobs)} jobs")
+    return jobs
+
+
+async def fetch_apple_jobs(session) -> list:
+    log.info("🍎 [Apple] Scanning…")
+    data = await _get_json(
+        session,
+        "https://jobs.apple.com/api/role/search",
+        params={"query": "machine learning", "sort": "newest", "page": "1"},
+    )
+    if not data:
+        return []
+    jobs = []
+    for item in data.get("searchResults", data.get("res", {}).get("searchResults", [])):
+        jobs.append({
+            "title":       item.get("postingTitle", item.get("title", "")),
+            "company":     "Apple",
+            "location":    item.get("locations", [{}])[0].get("name", "USA")
+                           if item.get("locations") else "USA",
+            "description": "",
+            "url":         f"https://jobs.apple.com/en-us/details/{item.get('positionId', '')}",
+            "posted":      (item.get("postDateInGMT") or "")[:10],
+            "source":      "Apple Careers",
+            "job_id":      str(item.get("positionId", "")),
+            "ats_type":    "apple",
+        })
+    log.info(f"  [Apple] {len(jobs)} jobs")
+    return jobs
+
+
+async def fetch_huggingface_jobs(session) -> list:
+    log.info("🤗 [HuggingFace] Scanning…")
+    data = await _get_json(
+        session,
+        "https://apply.workable.com/api/v3/accounts/hugging-face/jobs",
+    )
+    if not data:
+        return []
+    jobs = []
+    for p in data.get("results", data.get("jobs", [])):
+        jobs.append({
+            "title":       p.get("title", ""),
+            "company":     "Hugging Face",
+            "location":    p.get("location", {}).get("country", "Remote")
+                           if isinstance(p.get("location"), dict) else str(p.get("location", "")),
+            "description": strip_html(p.get("description", "")),
+            "url":         p.get("url", p.get("application_url", "")),
+            "posted":      (p.get("published", "") or "")[:10],
+            "source":      "Workable/HuggingFace",
+            "job_id":      str(p.get("shortcode", p.get("id", ""))),
+            "ats_type":    "workable",
+        })
+    log.info(f"  [HuggingFace] {len(jobs)} jobs")
+    return jobs
+
 
 async def fetch_amazon_jobs(session) -> list:
     log.info("📦 [Amazon] Scanning…")
@@ -404,6 +489,7 @@ async def run_scan() -> dict:
 
     resume_skills = extract_resume_skills(RESUME_TEXT)
     keyword       = "AI Engineer"
+    h1b_only      = os.getenv("H1B_ONLY", "true").lower() in ("1", "true", "yes")
 
     log.info("=" * 60)
     log.info(f"🚀 SCAN #{_scan_stats['scans']+1} — {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}")
@@ -420,6 +506,9 @@ async def run_scan() -> dict:
             fetch_ashby_jobs(session),
             fetch_google_jobs(session),
             fetch_amazon_jobs(session),
+            fetch_microsoft_jobs(session),
+            fetch_apple_jobs(session),
+            fetch_huggingface_jobs(session),
             fetch_workday_jobs(session, keyword),
             fetch_jobspy_jobs(),
             return_exceptions=True,
@@ -433,8 +522,12 @@ async def run_scan() -> dict:
     log.info(f"📊 Total raw: {len(all_jobs)}")
 
     stats = {"total": len(all_jobs), "filtered": 0, "duped": 0, "scored": 0, "alerted": 0}
+    max_alerts = int(os.getenv("MAX_ALERTS_PER_SCAN", "15"))
 
     for job in all_jobs:
+        if stats["alerted"] >= max_alerts:
+            log.info(f"   ⏸️  Reached MAX_ALERTS_PER_SCAN ({max_alerts}) — stopping this cycle.")
+            break
         title   = job.get("title", "?")
         company = job.get("company", "?")
 
@@ -445,17 +538,37 @@ async def run_scan() -> dict:
         job["h1b_status"]   = job.get("h1b_status") or label
 
         # All hard filters
-        passes, reason = apply_all_filters(job, resume_skills)
+        passes, reason = apply_all_filters(job, resume_skills, h1b_only=h1b_only)
         if not passes:
             log.debug(f"   ⛔ {title} @ {company} — {reason}")
             stats["filtered"] += 1
             continue
 
-        # 3-layer dedup
+        # Google Sheets dedup (optional layer 1+2)
+        try:
+            from sheets.client import is_seen_in_sheets, log_seen_id
+            jid = str(job.get("job_id", ""))
+            uhash = make_url_hash(str(job.get("url", "")))
+            if is_seen_in_sheets(jid, uhash):
+                stats["duped"] += 1
+                continue
+        except Exception:
+            pass
+
+        # 3-layer dedup (SQLite)
         if not is_new_job(conn, job):
             stats["duped"] += 1
             continue
         mark_job_seen(conn, job, score=0)
+        try:
+            from sheets.client import log_seen_id
+            log_seen_id(
+                str(job.get("job_id", "")),
+                make_url_hash(str(job.get("url", ""))),
+                make_title_hash(str(job.get("title", "")), str(job.get("company", ""))),
+            )
+        except Exception:
+            pass
 
         log.info(f"   ✅ NEW: {title} @ {company} | {job.get('h1b_status')}")
 
@@ -495,6 +608,13 @@ async def run_scan() -> dict:
 
     elapsed = round(time.monotonic() - start, 1)
     db_stats = get_db_stats(conn)
+
+    try:
+        from sheets.client import update_stats_dashboard
+        update_stats_dashboard({**stats, "applied": db_stats.get("applied", 0)})
+    except Exception:
+        pass
+
     conn.close()
 
     _scan_stats["scans"]        += 1
@@ -502,7 +622,7 @@ async def run_scan() -> dict:
     _scan_stats["alerted"]       += stats["alerted"]
     _scan_stats["last_scan"]     = datetime.now(timezone.utc).isoformat()
 
-    log.info(f"✅ Scan done in {elapsed}s | Alerted: {stats['alerted']} | DB total: {db_stats['total_seen']}")
+    log.info(f"✅ Scan done in {elapsed}s | Alerted: {stats['alerted']} | DB total: {db_stats.get('total_seen', 0)}")
     log.info(usage_report(init_db()))
     return {**stats, "elapsed_s": elapsed, "db": db_stats}
 

@@ -16,7 +16,7 @@ log = logging.getLogger(__name__)
 
 def _tg_post(text: str, parse_mode: str = "HTML") -> bool:
     """Send a message via Telegram Bot API. Returns True on success."""
-    token   = os.getenv("TELEGRAM_BOT_TOKEN", "8481347460:AAGh94HRDgOwvSEJJt0B58WFl-vxtlGYO5I")
+    token   = os.getenv("TELEGRAM_BOT_TOKEN", "")
     chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
     if not token or not chat_id:
         log.warning("Telegram not configured — skipping alert. Set TELEGRAM_CHAT_ID in .env")

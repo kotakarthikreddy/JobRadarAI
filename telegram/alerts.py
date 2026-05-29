@@ -11,29 +11,36 @@ from typing import Optional
 
 import requests
 
+from telegram.config import get_chat_id
+
 log = logging.getLogger(__name__)
 
 
-def _tg_post(text: str, parse_mode: str = "HTML") -> bool:
+def _tg_post(text: str, parse_mode: str = "") -> bool:
     """Send a message via Telegram Bot API. Returns True on success."""
     token   = os.getenv("TELEGRAM_BOT_TOKEN", "")
-    chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
+    chat_id = get_chat_id()
     if not token or not chat_id:
-        log.warning("Telegram not configured — skipping alert. Set TELEGRAM_CHAT_ID in .env")
+        log.warning("Telegram not configured — set TELEGRAM_CHAT_ID in Settings or message @KotaKarthik_bot /start")
         return False
     try:
+        payload = {
+            "chat_id": chat_id,
+            "text": text,
+            "disable_web_page_preview": True,
+        }
+        if parse_mode:
+            payload["parse_mode"] = parse_mode
         resp = requests.post(
             f"https://api.telegram.org/bot{token}/sendMessage",
-            json={
-                "chat_id":                  chat_id,
-                "text":                     text,
-                "parse_mode":               parse_mode,
-                "disable_web_page_preview": True,
-            },
+            json=payload,
             timeout=10,
         )
-        time.sleep(0.5)  # Telegram rate limit buffer
-        return resp.status_code == 200
+        if resp.status_code != 200:
+            log.warning("Telegram API error: %s", resp.text[:200])
+            return False
+        time.sleep(0.5)
+        return True
     except Exception as e:
         log.error(f"Telegram send error: {e}")
         return False
@@ -53,20 +60,16 @@ def send_wave1(job: dict) -> None:
     h1b      = job.get("h1b_status", "❓ Unknown")
 
     msg = (
-        "━━━━━━━━━━━━━━━━━━━━━━\n"
-        "⚡ <b>NEW JOB DETECTED</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"🏢 <b>{company}</b>\n"
-        f"💼 {title}\n"
-        f"📍 {location}\n"
-        f"🛂 {h1b}\n"
-        f"📅 Posted: {posted}\n"
-        f"🔗 <a href='{url}'>Apply Now</a>\n\n"
-        "🤖 <i>AI scoring in progress...</i>\n"
-        "━━━━━━━━━━━━━━━━━━━━━━"
+        "NEW ML JOB\n"
+        f"{company}\n"
+        f"{title}\n"
+        f"{location} | {h1b}\n"
+        f"Posted: {posted}\n"
+        f"{url}\n"
+        "Scoring..."
     )
     _tg_post(msg)
-    log.info(f"📱 Wave 1 sent — {title} @ {company}")
+    log.info("Wave 1 sent — %s @ %s", title, company)
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -91,28 +94,15 @@ def send_wave2(job: dict, score_result: dict) -> None:
     time_badge = score_result.get("time_badge", "")
     h1b       = "✅ Verified" if job.get("h1b_verified") else "❓ Unknown"
 
-    strengths_text = "\n".join(f"  ✅ {s}" for s in strengths[:3]) or "  ✅ Strong ML/AI match"
-    gaps_text      = "\n".join(f"  ⚠️ {g}" for g in gaps[:2])     or "  ✅ No major gaps"
-
     msg = (
-        "━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"🎯 <b>{score}/100 — {verdict} {emoji}</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"🏢 <b>{company}</b> | {title}\n"
-        f"📍 {location} | 💰 {salary}\n"
-        f"🏅 H1B: {h1b}\n"
-        f"{time_badge}\n\n"
-        f"<b>✅ YOUR EDGE:</b>\n{strengths_text}\n\n"
-        f"<b>⚠️ WATCH OUT:</b>\n{gaps_text}\n\n"
-        f"<b>💡 INSIDER TIP:</b>\n{tip[:300]}\n\n"
-        f"📄 /cl_{job_id}       → Cover letter\n"
-        f"✅ /applied_{job_id}  → Mark applied\n"
-        f"🚫 /skip_{job_id}     → Not interested\n"
-        f"🔗 <a href='{url}'>Apply Now ↗</a>\n"
-        "━━━━━━━━━━━━━━━━━━━━━━"
+        f"ML JOB — {score}/100 {verdict}\n"
+        f"{company} | {title}\n"
+        f"{location} | H1B: {h1b}\n"
+        f"Apply: {url}\n"
+        f"/applied_{job_id} or /skip_{job_id}"
     )
     _tg_post(msg)
-    log.info(f"📱 Wave 2 sent — {score}/100 | {title} @ {company}")
+    log.info("Wave 2 sent — %s/100 | %s @ %s", score, title, company)
 
 
 # ─────────────────────────────────────────────────────────────────

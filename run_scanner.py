@@ -1,60 +1,39 @@
-"""run_scanner.py — Standalone scanner runner (no Streamlit required).
-Run this to scan in the background: python run_scanner.py
-"""
+"""run_scanner.py — Standalone scanner runner (no Streamlit required)."""
 
 import asyncio
-import logging
 import os
 import sys
-import time
-from datetime import datetime, timezone
 
 from dotenv import load_dotenv
+
 load_dotenv()
 
+from config.logging_setup import setup_logging
+from telegram.config import get_chat_id, telegram_configured
+
+log = setup_logging("jobradar")
 os.makedirs("data", exist_ok=True)
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler("data/jobradar.log"),
-    ],
-)
-log = logging.getLogger("jobradar")
-
-from db.storage import init_db
+from db.storage import init_db, get_db_stats
 from scanner.orchestrator import run_scan
 from telegram.bot import start_bot_in_background
 from telegram.alerts import send_crash_alert, send_status
-from db.storage import get_db_stats
 
 
-def _validate():
-    """Fail fast on missing critical config."""
-    errors = []
+def _validate() -> None:
     if not os.getenv("GEMINI_API_KEY") and not os.getenv("GROQ_API_KEY"):
-        errors.append("At least one AI key required: GEMINI_API_KEY or GROQ_API_KEY")
+        log.warning("No AI key set — local rule-based scoring will be used.")
     if not os.getenv("TELEGRAM_BOT_TOKEN"):
-        errors.append("TELEGRAM_BOT_TOKEN not set — alerts won't be sent")
-    if not os.getenv("TELEGRAM_CHAT_ID"):
-        errors.append("TELEGRAM_CHAT_ID not set — alerts won't be sent")
-    for e in errors:
-        log.warning(f"⚠️  {e}")
-    return True   # warnings only, not fatal
+        log.warning("TELEGRAM_BOT_TOKEN not set — alerts disabled.")
+    if not get_chat_id():
+        log.warning("TELEGRAM_CHAT_ID not set — message @KotaKarthik_bot /start to auto-configure.")
+    elif telegram_configured():
+        log.info("Telegram alerts configured (chat_id=%s)", get_chat_id()[:4] + "...")
 
 
 async def continuous_scan():
-    """Run scans in a loop every SCAN_INTERVAL_MINUTES minutes."""
     interval = int(os.getenv("SCAN_INTERVAL_MINUTES", "5"))
-
-    log.info("=" * 60)
-    log.info("🎯 JobRadar AI v5.0 — Starting continuous scan")
-    log.info(f"   Interval: every {interval} minutes")
-    log.info(f"   Min score: {os.getenv('MIN_MATCH_SCORE', '60')}")
-    log.info(f"   H1B only: {os.getenv('H1B_ONLY', 'true')}")
-    log.info("=" * 60)
+    log.info("JobRadar AI v5.0 — continuous scan every %s min", interval)
 
     scan_count = 0
     while True:
@@ -62,34 +41,32 @@ async def continuous_scan():
         try:
             result = await run_scan()
             log.info(
-                f"✅ Scan #{scan_count} done | "
-                f"Alerted: {result.get('alerted',0)} | "
-                f"Elapsed: {result.get('elapsed_s',0)}s"
+                "Scan #%s done | Alerted: %s | Elapsed: %ss",
+                scan_count,
+                result.get("alerted", 0),
+                result.get("elapsed_s", 0),
             )
-
-            # Send status summary every 10 scans
-            if scan_count % 10 == 0:
+            if scan_count % 10 == 0 and telegram_configured():
                 conn = init_db()
                 send_status(get_db_stats(conn), f"{scan_count * interval}m")
                 conn.close()
-
         except KeyboardInterrupt:
             log.info("Stopped by user.")
             break
         except Exception as e:
-            log.exception(f"SCAN ERROR: {e}")
-            send_crash_alert(str(e))
+            log.exception("SCAN ERROR: %s", e)
+            if telegram_configured():
+                send_crash_alert(str(e))
 
-        log.info(f"⏳ Sleeping {interval} minutes until next scan…")
+        log.info("Sleeping %s minutes until next scan...", interval)
         await asyncio.sleep(interval * 60)
 
 
 if __name__ == "__main__":
     _validate()
     start_bot_in_background()
-    log.info("🤖 Telegram bot started → @KotaKarthik_bot")
-
+    log.info("Telegram bot started -> @KotaKarthik_bot")
     try:
         asyncio.run(continuous_scan())
     except KeyboardInterrupt:
-        log.info("👋 JobRadar AI stopped.")
+        log.info("JobRadar AI stopped.")

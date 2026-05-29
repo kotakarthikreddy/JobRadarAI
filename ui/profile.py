@@ -5,6 +5,7 @@ from config.candidate import (
     CANDIDATE_NAME, CANDIDATE_EMAIL, CANDIDATE_LOCATION,
     CANDIDATE_VISA, CANDIDATE_SALARY_RANGE, EXACT_ROLES, CORE_SKILLS
 )
+from telegram.config import get_chat_id, register_chat_id, telegram_configured
 
 def show_profile():
     st.markdown("## 👤 Profile & Settings")
@@ -41,7 +42,7 @@ def show_profile():
             "GROQ_API_KEY": os.getenv("GROQ_API_KEY", ""),
             "OPENROUTER_API_KEY": os.getenv("OPENROUTER_API_KEY", ""),
             "TELEGRAM_BOT_TOKEN": os.getenv("TELEGRAM_BOT_TOKEN", ""),
-            "TELEGRAM_CHAT_ID": os.getenv("TELEGRAM_CHAT_ID", ""),
+            "TELEGRAM_CHAT_ID": get_chat_id(),
             "GOOGLE_SHEET_ID": os.getenv("GOOGLE_SHEET_ID", ""),
         }
         for k, v in keys.items():
@@ -56,8 +57,8 @@ def show_profile():
 
     with tab3:
         st.subheader("Telegram Bot Status")
-        bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "8481347460:AAGh94HRDgOwvSEJJt0B58WFl-vxtlGYO5I")
-        chat_id   = os.getenv("TELEGRAM_CHAT_ID", "")
+        bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "")
+        chat_id   = get_chat_id()
 
         if bot_token:
             st.success(f"✅ Bot connected: @KotaKarthik_bot")
@@ -67,13 +68,12 @@ def show_profile():
         if chat_id:
             st.success(f"✅ Chat ID configured: {chat_id[:4]}…")
         else:
-            st.warning(
-                "⚠️ **TELEGRAM_CHAT_ID not set!**\n\n"
-                "1. Open Telegram\n"
-                "2. Message [@userinfobot](https://t.me/userinfobot)\n"
-                "3. Copy the ID number it gives you\n"
-                "4. Add to `.env`: `TELEGRAM_CHAT_ID=your_id_here`"
-            )
+            st.warning("TELEGRAM_CHAT_ID not set.")
+            new_id = st.text_input("Enter your Telegram Chat ID")
+            if st.button("Save Chat ID") and new_id.strip():
+                register_chat_id(new_id.strip())
+                st.success("Saved to .env")
+                st.rerun()
 
         st.markdown("---")
         st.subheader("Test Alert")

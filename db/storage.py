@@ -229,10 +229,27 @@ def update_job_status(conn: sqlite3.Connection, job_id: str, status: str) -> Non
     conn.commit()
 
 
+# ─────────────────────────────────────────────────────────────────
+# JOB QUERIES
+# ─────────────────────────────────────────────────────────────────
+
+_ML_TITLE_SQL = """
+    lower(job_title) LIKE '%ml%' OR lower(job_title) LIKE '%machine learning%'
+    OR lower(job_title) LIKE '%ai engineer%' OR lower(job_title) LIKE '%mlops%'
+    OR lower(job_title) LIKE '%llm%' OR lower(job_title) LIKE '%nlp%'
+    OR lower(job_title) LIKE '%deep learning%' OR lower(job_title) LIKE '%data scientist%'
+    OR lower(job_title) LIKE '%applied scientist%' OR lower(job_title) LIKE '%research engineer%'
+    OR lower(job_title) LIKE '%genai%' OR lower(job_title) LIKE '%generative ai%'
+    OR lower(job_title) LIKE '%computer vision%'
+"""
+
+
 def get_top_jobs(conn: sqlite3.Connection, n: int = 5, status: str = "New") -> list:
     rows = conn.execute(
-        "SELECT * FROM job_tracker WHERE status=? ORDER BY match_score DESC LIMIT ?",
-        (status, n)
+        f"""SELECT * FROM job_tracker WHERE status=?
+            AND ({_ML_TITLE_SQL})
+            ORDER BY match_score DESC LIMIT ?""",
+        (status, n),
     ).fetchall()
     return [dict(r) for r in rows]
 
@@ -242,6 +259,52 @@ def get_all_jobs(conn: sqlite3.Connection) -> list:
         "SELECT * FROM job_tracker ORDER BY detected_at DESC"
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+def get_ml_jobs(conn: sqlite3.Connection) -> list:
+    """ML/AI jobs only, H1B verified, newest first."""
+    rows = conn.execute(
+        f"""SELECT * FROM job_tracker
+            WHERE ({_ML_TITLE_SQL})
+            AND (h1b_sponsor LIKE '%Yes%' OR h1b_sponsor LIKE '%Verified%')
+            AND status NOT IN ('Skipped', 'Rejected')
+            ORDER BY detected_at DESC"""
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def rescore_all_jobs(conn: sqlite3.Connection) -> int:
+    """Re-score every tracked job with local rules (fixes old score=50 rows)."""
+    from ai.local_scorer import score_job_local
+
+    rows = conn.execute("SELECT job_id, company, job_title, location, h1b_sponsor FROM job_tracker").fetchall()
+    updated = 0
+    for row in rows:
+        job = {
+            "title": row["job_title"],
+            "company": row["company"],
+            "location": row["location"],
+            "description": row["job_title"],
+            "h1b_verified": "Yes" in (row["h1b_sponsor"] or "") or "Verified" in (row["h1b_sponsor"] or ""),
+        }
+        result = score_job_local(job)
+        conn.execute(
+            """UPDATE job_tracker SET match_score=?, verdict=?, salary_estimate=?
+               WHERE job_id=?""",
+            (
+                result["match_score"],
+                result["verdict"],
+                result.get("salary_estimate", ""),
+                row["job_id"],
+            ),
+        )
+        conn.execute(
+            "UPDATE seen_jobs SET score=? WHERE job_id=?",
+            (result["match_score"], row["job_id"]),
+        )
+        updated += 1
+    conn.commit()
+    return updated
 
 
 def get_cover_letter(conn: sqlite3.Connection, job_id: str) -> Optional[str]:

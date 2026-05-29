@@ -14,8 +14,14 @@ from typing import Optional
 
 from db.storage import get_ai_count, increment_ai_count
 from config.candidate import RESUME_TEXT, SCORING_RUBRIC
+from ai.local_scorer import score_job_local
 
 log = logging.getLogger(__name__)
+
+GEMINI_MODELS = [
+    "gemini-2.0-flash-lite",
+    "gemini-2.0-flash",
+]
 
 PROVIDER_LIMITS = {
     "groq":       14000,  # buffer under 14,400/day
@@ -231,32 +237,32 @@ def score_with_gemini(prompt: str, conn: sqlite3.Connection) -> Optional[dict]:
         from google import genai
         if _gemini_client is None:
             _gemini_client = genai.Client(api_key=api_key)
-        model = os.getenv("GEMINI_SCORER_MODEL", "gemini-1.5-flash")
-        resp  = _gemini_client.models.generate_content(model=model, contents=prompt)
-        result = parse_response(resp.text.strip())
-        if result:
-            result["provider"] = f"Gemini / {model}"
-            count = increment_ai_count(conn, "gemini")
-            log.info(f"  [Gemini] score={result['match_score']} | calls={count}")
-            return result
     except Exception as e:
-        s = str(e)
-        if "429" in s or "quota" in s.lower():
-            log.warning("[Gemini] Quota — retrying with gemini-1.5-flash after 8s")
-            time.sleep(8)
+        log.warning("[Gemini] init failed: %s", str(e)[:120])
+        return None
+
+    preferred = os.getenv("GEMINI_SCORER_MODEL", "").strip()
+    models = ([preferred] if preferred else []) + [m for m in GEMINI_MODELS if m != preferred]
+
+    for model in models:
+        for attempt in range(2):
             try:
-                resp = _gemini_client.models.generate_content(
-                    model="gemini-1.5-flash", contents=prompt
-                )
+                resp = _gemini_client.models.generate_content(model=model, contents=prompt)
                 result = parse_response(resp.text.strip())
                 if result:
-                    result["provider"] = "Gemini / gemini-1.5-flash"
-                    increment_ai_count(conn, "gemini")
+                    result["provider"] = f"Gemini / {model}"
+                    count = increment_ai_count(conn, "gemini")
+                    log.info("  [Gemini] score=%s | calls=%s", result["match_score"], count)
                     return result
-            except Exception:
-                pass
-        else:
-            log.warning(f"[Gemini] Error: {s[:120]}")
+            except Exception as e:
+                s = str(e)
+                if "429" in s or "quota" in s.lower() or "resource_exhausted" in s.lower():
+                    wait = 4 * (attempt + 1)
+                    log.warning("[Gemini] rate limit on %s — wait %ss", model, wait)
+                    time.sleep(wait)
+                    continue
+                log.warning("[Gemini] %s error: %s", model, s[:120])
+                break
     return None
 
 
@@ -265,20 +271,22 @@ def score_with_gemini(prompt: str, conn: sqlite3.Connection) -> Optional[dict]:
 # ─────────────────────────────────────────────────────────────────
 
 def score_job(job: dict, conn: sqlite3.Connection) -> Optional[dict]:
-    """
-    Score a job using provider fallback chain: Groq → OpenRouter → Gemini.
-    Returns full score dict or FALLBACK_SCORE on error.
-    """
+    """Score via Gemini -> Groq -> OpenRouter -> local rules."""
     prompt = build_scoring_prompt(job)
 
-    # Spec: Gemini 1.5/2.0 Flash primary; Groq/OpenRouter as fallbacks
-    for name, fn in [("gemini", score_with_gemini), ("groq", score_with_groq), ("openrouter", score_with_openrouter)]:
+    for fn in (score_with_gemini, score_with_groq, score_with_openrouter):
         result = fn(prompt, conn)
         if result is not None:
+            if not result.get("cover_letter"):
+                from ai.cover_letter import generate_cover_letter
+                result["cover_letter"] = generate_cover_letter(job, result)
             return result
 
-    log.warning("All AI providers failed — using fallback score.")
-    return FALLBACK_SCORE.copy()
+    log.warning("All AI providers failed — using local rule-based scorer.")
+    result = score_job_local(job)
+    from ai.cover_letter import generate_cover_letter
+    result["cover_letter"] = generate_cover_letter(job, result)
+    return result
 
 
 def usage_report(conn: sqlite3.Connection) -> str:

@@ -575,8 +575,8 @@ async def run_scan() -> dict:
         # Wave 1 Telegram (immediate)
         send_wave1(job)
 
-        # AI Scoring
-        await asyncio.sleep(2)  # small delay to avoid rate limits
+        # AI Scoring (local rules if Gemini quota exceeded)
+        await asyncio.sleep(0.5)
         score_result = score_job(job, conn)
         if not score_result:
             continue

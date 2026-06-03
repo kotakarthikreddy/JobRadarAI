@@ -66,6 +66,7 @@ def init_db() -> sqlite3.Connection:
             cover_letter    TEXT,
             ats_type        TEXT,
             source          TEXT,
+            posted_date     TEXT,
             wave1_sent      INTEGER DEFAULT 0,
             wave2_sent      INTEGER DEFAULT 0
         );
@@ -82,6 +83,10 @@ def init_db() -> sqlite3.Connection:
         CREATE INDEX IF NOT EXISTS idx_tracker_score ON job_tracker(match_score DESC);
         CREATE INDEX IF NOT EXISTS idx_tracker_status ON job_tracker(status);
     """)
+    # ── Migrate existing DBs: add posted_date if missing ──────────
+    existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(job_tracker)").fetchall()}
+    if "posted_date" not in existing_cols:
+        conn.execute("ALTER TABLE job_tracker ADD COLUMN posted_date TEXT")
     conn.commit()
     return conn
 
@@ -194,19 +199,20 @@ def upsert_job(conn: sqlite3.Connection, job: dict, score_result: dict) -> None:
         INSERT INTO job_tracker
             (job_id, detected_at, company, job_title, location, remote_friendly,
              match_score, verdict, h1b_sponsor, salary_estimate, job_url,
-             status, cover_letter, ats_type, source)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+             status, cover_letter, ats_type, source, posted_date)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(job_id) DO UPDATE SET
-            match_score    = excluded.match_score,
-            verdict        = excluded.verdict,
+            match_score     = excluded.match_score,
+            verdict         = excluded.verdict,
             salary_estimate = excluded.salary_estimate,
-            cover_letter   = excluded.cover_letter
+            cover_letter    = excluded.cover_letter
     """, (
         job_id, now,
         job.get("company", ""), job.get("title", ""), job.get("location", ""),
         "Yes" if "remote" in str(job.get("location", "")).lower() else "Unknown",
         score, verdict, h1b, salary, job.get("url", ""),
         "New", cl, job.get("ats_type", ""), job.get("source", ""),
+        str(job.get("posted", "") or "")[:10] or now[:10],
     ))
     conn.commit()
 

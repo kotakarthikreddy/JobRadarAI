@@ -105,24 +105,46 @@ def handle_update(update: dict) -> None:
             job_id = text[9:].strip()
             update_job_status(conn, job_id, "Applied")
             fu = (datetime.now(timezone.utc) + timedelta(days=7)).strftime("%Y-%m-%d")
-            _send_to(chat_id, f"Applied logged. Follow-up: {fu}")
+            _send_to(chat_id, f"✅ Applied logged.\n📅 Follow-up reminder: {fu}")
+
+        elif text.startswith("/interview_"):
+            job_id = text[11:].strip()
+            update_job_status(conn, job_id, "Interviewing")
+            job = get_job_by_id(conn, job_id)
+            company = job.get("company", "the company") if job else "the company"
+            _send_to(chat_id, f"🎯 Interviewing logged!\n\n💡 Study tip: Research {company}'s tech blog, recent papers, and team structure. Prepare STAR stories for behavioral rounds.")
+
+        elif text.startswith("/reject_"):
+            job_id = text[8:].strip()
+            update_job_status(conn, job_id, "Rejected")
+            _send_to(chat_id, "💪 Logged as rejected. On to the next one — your skills are in demand.")
 
         elif text.startswith("/skip_"):
             job_id = text[6:].strip()
             update_job_status(conn, job_id, "Skipped")
-            _send_to(chat_id, "Skipped.")
+            _send_to(chat_id, "🚫 Skipped.")
+
+        elif text.startswith("/cl_"):
+            job_id = text[4:].strip()
+            from db.storage import get_cover_letter
+            cl = get_cover_letter(conn, job_id)
+            if cl and cl.strip():
+                _send_to(chat_id, f"📄 Cover Letter:\n\n{cl[:3500]}")
+            else:
+                _send_to(chat_id, "No cover letter stored for this job. Run a scan with AI scoring enabled.")
 
         elif text == "/top5":
             jobs = get_top_jobs(conn, n=5, status="New")
             if not jobs:
                 _send_to(chat_id, "No new ML jobs yet. Scanner runs every 5 min.")
             else:
-                lines = ["Top 5 ML jobs:\n"]
+                lines = ["🏆 Top 5 ML Jobs:\n"]
                 for i, j in enumerate(jobs, 1):
                     lines.append(
                         f"{i}. {j.get('match_score', 0)}/100 — {j.get('job_title', 'N/A')}\n"
-                        f"   {j.get('company', '?')} | {j.get('location', '?')}\n"
-                        f"   {j.get('job_url', '')}"
+                        f"   🏢 {j.get('company', '?')} | 📍 {j.get('location', '?')}\n"
+                        f"   🔗 {j.get('job_url', '')}\n"
+                        f"   /applied_{j.get('job_id', '')[:12]}"
                     )
                 _send_to(chat_id, "\n".join(lines))
 
@@ -130,23 +152,32 @@ def handle_update(update: dict) -> None:
             stats = get_db_stats(conn)
             _send_to(
                 chat_id,
-                f"JobRadar Live\n"
-                f"Uptime: {_get_uptime()}\n"
-                f"ML jobs tracked: {stats.get('total_seen', 0)}\n"
-                f"Applied: {stats.get('applied', 0)}",
+                f"📊 JobRadar AI Live\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"✅ Uptime: {_get_uptime()}\n"
+                f"🔍 ML jobs tracked: {stats.get('total_seen', 0)}\n"
+                f"🎯 Alerts sent: {stats.get('total_alerted', 0)}\n"
+                f"📬 Applied: {stats.get('applied', 0)}\n"
+                f"🎤 Interviewing: {stats.get('interviewing', 0)}\n"
+                f"🏆 Top score: {stats.get('top_match', {}).get('match_score', 0)}/100",
             )
 
         elif text in ("/start", "/help", "/reset", "/myid"):
             _send_to(
                 chat_id,
-                f"JobRadar AI connected.\n\n"
+                f"🎯 JobRadar AI v5.0 Connected\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
                 f"Your chat ID: {chat_id}\n"
                 f"(saved — alerts will come here)\n\n"
-                f"Commands:\n"
+                f"📋 Commands:\n"
                 f"/top5 — best new ML jobs\n"
                 f"/status — scanner stats\n"
                 f"/applied_<id> — mark applied\n"
-                f"/skip_<id> — skip job",
+                f"/interview_<id> — mark interviewing\n"
+                f"/reject_<id> — mark rejected\n"
+                f"/skip_<id> — skip job\n"
+                f"/cl_<id> — get cover letter\n"
+                f"/help — this message",
             )
 
     except Exception as e:

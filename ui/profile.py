@@ -1,4 +1,4 @@
-"""ui/profile.py — Profile & settings page"""
+"""ui/profile.py — Candidate profile & configuration"""
 import streamlit as st
 import os
 from config.candidate import (
@@ -6,36 +6,52 @@ from config.candidate import (
     CANDIDATE_VISA, CANDIDATE_SALARY_RANGE, EXACT_ROLES, CORE_SKILLS
 )
 from telegram.config import get_chat_id, register_chat_id, telegram_configured
+from telegram.alerts import _tg_post
+
 
 def show_profile():
-    st.markdown("## 👤 Profile & Settings")
+    st.markdown('<div class="section-header">👤 Profile & Configuration</div>', unsafe_allow_html=True)
 
-    tab1, tab2, tab3 = st.tabs(["👤 Candidate Info", "🔑 API Keys", "🤖 Telegram Status"])
+    tab1, tab2, tab3 = st.tabs(["👤 Candidate", "🔑 API Keys", "🤖 Telegram"])
 
     with tab1:
-        st.subheader("Candidate Profile")
-        c1, c2 = st.columns(2)
-        with c1:
-            st.text_input("Name", CANDIDATE_NAME, disabled=True)
-            st.text_input("Email", CANDIDATE_EMAIL, disabled=True)
-            st.text_input("Location", CANDIDATE_LOCATION, disabled=True)
-        with c2:
-            st.text_input("Visa Status", CANDIDATE_VISA, disabled=True)
-            st.text_input("Salary Target", CANDIDATE_SALARY_RANGE, disabled=True)
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown(f"""
+            <div class="metric-card" style="text-align:left; padding:24px;">
+                <div style="font-size:1.3rem; font-weight:800; color:#f1f5f9; margin-bottom:12px;">
+                    {CANDIDATE_NAME}
+                </div>
+                <div style="font-size:0.85rem; color:#94a3b8; line-height:2;">
+                    📧 {CANDIDATE_EMAIL}<br>
+                    📍 {CANDIDATE_LOCATION}<br>
+                    🛂 {CANDIDATE_VISA}<br>
+                    💰 {CANDIDATE_SALARY_RANGE}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
 
-        st.markdown("---")
-        st.subheader("Target Roles")
-        st.info("These roles are hardcoded in `config/candidate.py`. Edit that file to change them.")
-        for r in EXACT_ROLES[:10]:
-            st.markdown(f"• {r.title()}")
+        with col2:
+            st.markdown("""
+            <div class="metric-card" style="text-align:left; padding:24px;">
+                <div style="font-size:0.9rem; font-weight:700; color:#f1f5f9; margin-bottom:12px;">
+                    🎯 Target Roles
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            for r in EXACT_ROLES[:8]:
+                st.markdown(f"<span style='font-size:0.8rem;color:#94a3b8;'>• {r.title()}</span>", unsafe_allow_html=True)
 
-        st.markdown("---")
-        st.subheader("Core Skills (used for keyword matching)")
-        st.write(", ".join(sorted(CORE_SKILLS)))
+        st.markdown('<div class="section-header">🛠️ Core Skills</div>', unsafe_allow_html=True)
+        skills_html = " ".join(
+            f'<span class="badge badge-remote" style="margin:3px;">{s}</span>'
+            for s in sorted(CORE_SKILLS)
+        )
+        st.markdown(f'<div style="line-height:2.2;">{skills_html}</div>', unsafe_allow_html=True)
 
     with tab2:
-        st.subheader("API Configuration")
-        st.info("These values are loaded from your `.env` file. Edit `.env` to update them.")
+        st.markdown('<div class="section-header">🔑 API Configuration</div>', unsafe_allow_html=True)
+        st.caption("Values loaded from `.env` — edit that file to change them.")
 
         keys = {
             "GEMINI_API_KEY": os.getenv("GEMINI_API_KEY", ""),
@@ -44,46 +60,52 @@ def show_profile():
             "TELEGRAM_BOT_TOKEN": os.getenv("TELEGRAM_BOT_TOKEN", ""),
             "TELEGRAM_CHAT_ID": get_chat_id(),
             "GOOGLE_SHEET_ID": os.getenv("GOOGLE_SHEET_ID", ""),
+            "GOOGLE_CREDS_JSON": os.getenv("GOOGLE_CREDS_JSON", "")[:20] + "…" if os.getenv("GOOGLE_CREDS_JSON") else "",
         }
-        for k, v in keys.items():
-            masked = ("✅ " + v[:6] + "…" + v[-4:]) if v and len(v) > 10 else ("⚠️ Not set" if not v else "✅ Set")
-            st.text_input(k, masked, disabled=True)
 
-        st.markdown("---")
-        st.subheader("Min Match Score")
-        min_score = int(os.getenv("MIN_MATCH_SCORE", "60"))
-        st.metric("Current threshold", f"{min_score}/100")
-        st.caption("Change `MIN_MATCH_SCORE` in `.env` to adjust")
+        for k, v in keys.items():
+            if v and len(v) > 10:
+                status = f"✅ `{v[:8]}…{v[-4:]}`"
+            elif v:
+                status = "✅ Set"
+            else:
+                status = "⚠️ Not configured"
+            st.markdown(f"**{k}** → {status}")
 
     with tab3:
-        st.subheader("Telegram Bot Status")
+        st.markdown('<div class="section-header">🤖 Telegram Bot</div>', unsafe_allow_html=True)
+
         bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "")
-        chat_id   = get_chat_id()
+        chat_id = get_chat_id()
 
-        if bot_token:
-            st.success(f"✅ Bot connected: @KotaKarthik_bot")
+        if bot_token and chat_id:
+            st.markdown(f"""
+            <div class="scanner-bar">
+                <div class="scanner-dot"></div>
+                <div class="scanner-text">
+                    <b>Connected</b> → @KotaKarthik_bot · Chat: {chat_id[:6]}…
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
         else:
-            st.error("❌ Bot token not set in .env")
-
-        if chat_id:
-            st.success(f"✅ Chat ID configured: {chat_id[:4]}…")
-        else:
-            st.warning("TELEGRAM_CHAT_ID not set.")
-            new_id = st.text_input("Enter your Telegram Chat ID")
-            if st.button("Save Chat ID") and new_id.strip():
-                register_chat_id(new_id.strip())
-                st.success("Saved to .env")
-                st.rerun()
+            st.warning("Telegram not fully configured.")
 
         st.markdown("---")
-        st.subheader("Test Alert")
-        if st.button("📱 Send Test Message", type="primary"):
-            try:
-                from telegram.alerts import _tg_post
-                ok = _tg_post("🎯 <b>JobRadar AI v5.0 is live!</b>\n\nYour scanner is configured and ready. Good luck Karthik! 🚀")
+        st.markdown("**Update Chat ID:**")
+        st.caption("Message [@userinfobot](https://t.me/userinfobot) to get your numeric ID, or send /start to @KotaKarthik_bot.")
+
+        new_id = st.text_input("Chat ID", value=chat_id or "", placeholder="e.g. 1004924254")
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("💾 Save", use_container_width=True):
+                if new_id.strip():
+                    register_chat_id(new_id.strip())
+                    st.success("Saved!")
+                    st.rerun()
+        with col2:
+            if st.button("📱 Send Test", use_container_width=True, type="primary"):
+                ok = _tg_post("🎯 JobRadar AI v5.0 is live!\n\nAlerts configured and ready. Good luck Karthik! 🚀")
                 if ok:
-                    st.success("✅ Test message sent! Check your Telegram.")
+                    st.success("✅ Check Telegram!")
                 else:
-                    st.error("❌ Failed to send. Check TELEGRAM_CHAT_ID in .env")
-            except Exception as e:
-                st.error(f"Error: {e}")
+                    st.error("Failed — check token & chat ID")

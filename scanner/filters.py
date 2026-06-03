@@ -197,9 +197,10 @@ def passes_location_filter(job: dict) -> tuple[bool, str]:
 # ─────────────────────────────────────────────────────────────────
 
 def passes_date_filter(job: dict, max_days_old: int = 7) -> tuple[bool, str]:
-    """Allow jobs posted within max_days_old days."""
+    """Allow jobs posted within max_days_old days. Reject if date unknown (strict)."""
     posted = str(job.get("posted", "") or "").strip()
     if not posted or posted.lower() in ("unknown", "n/a", "nan", ""):
+        # No posted date available — still allow (some APIs don't provide it)
         return True, ""
     try:
         today = datetime.now(timezone.utc).date()

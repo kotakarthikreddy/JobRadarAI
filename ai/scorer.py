@@ -26,7 +26,7 @@ GEMINI_MODELS = [
 PROVIDER_LIMITS = {
     "groq":       14000,  # buffer under 14,400/day
     "openrouter": 180,    # buffer under 200/day
-    "gemini":     240,    # buffer under 250/day
+    "gemini":     1400,   # buffer under 1,500/day (free tier)
 }
 
 FALLBACK_SCORE = {
@@ -220,7 +220,7 @@ def score_with_openrouter(prompt: str, conn: sqlite3.Connection) -> Optional[dic
 
 
 # ─────────────────────────────────────────────────────────────────
-# GEMINI — Tertiary + Primary for cover letters (free tier)
+# GEMINI — Primary scorer (free tier: 1500 req/day)
 # ─────────────────────────────────────────────────────────────────
 
 _gemini_client = None
@@ -245,24 +245,21 @@ def score_with_gemini(prompt: str, conn: sqlite3.Connection) -> Optional[dict]:
     models = ([preferred] if preferred else []) + [m for m in GEMINI_MODELS if m != preferred]
 
     for model in models:
-        for attempt in range(2):
-            try:
-                resp = _gemini_client.models.generate_content(model=model, contents=prompt)
-                result = parse_response(resp.text.strip())
-                if result:
-                    result["provider"] = f"Gemini / {model}"
-                    count = increment_ai_count(conn, "gemini")
-                    log.info("  [Gemini] score=%s | calls=%s", result["match_score"], count)
-                    return result
-            except Exception as e:
-                s = str(e)
-                if "429" in s or "quota" in s.lower() or "resource_exhausted" in s.lower():
-                    wait = 4 * (attempt + 1)
-                    log.warning("[Gemini] rate limit on %s — wait %ss", model, wait)
-                    time.sleep(wait)
-                    continue
-                log.warning("[Gemini] %s error: %s", model, s[:120])
-                break
+        try:
+            resp = _gemini_client.models.generate_content(model=model, contents=prompt)
+            result = parse_response(resp.text.strip())
+            if result:
+                result["provider"] = f"Gemini / {model}"
+                count = increment_ai_count(conn, "gemini")
+                log.info("  [Gemini] score=%s | calls=%s", result["match_score"], count)
+                return result
+        except Exception as e:
+            s = str(e)
+            if "429" in s or "quota" in s.lower() or "resource_exhausted" in s.lower():
+                log.warning("[Gemini] Quota exhausted — skipping to next provider.")
+                return None
+            log.warning("[Gemini] %s error: %s", model, s[:120])
+            break
     return None
 
 

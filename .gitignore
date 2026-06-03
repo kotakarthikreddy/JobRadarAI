@@ -9,21 +9,31 @@ dist/
 build/
 *.egg
 .eggs/
+venv/
+.venv/
 
-# ── Environment ────────────────────────────────────────────────────
+# ── Environment (NEVER commit secrets) ────────────────────────────
 .env
 *.env
+!.env.example
 
 # ── Data / DB ──────────────────────────────────────────────────────
 data/jobradar.db
+data/jobradar.db-shm
+data/jobradar.db-wal
 data/*.db
 data/*.log
+data/bot_offset.txt
+data/bot_polling.lock
+data/telegram_chat.json
+data/snapshot_*.json
 
 # ── IDE ────────────────────────────────────────────────────────────
 .vscode/
 .idea/
 *.swp
 *.swo
+.kiro/
 
 # ── OS ─────────────────────────────────────────────────────────────
 .DS_Store
@@ -31,7 +41,3 @@ Thumbs.db
 
 # ── Streamlit ──────────────────────────────────────────────────────
 .streamlit/secrets.toml
-
-# SAFE TO COMMIT:
-# data/scan_history.tsv — plain text scan log
-# .env.example           — template without real keys
